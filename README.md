@@ -165,6 +165,8 @@ class HttpTool(Tool):
 quit             Exit
 ```
 
+Saved session IDs are sanitized before they become filenames, so resume data stays inside `~/.corecoder/sessions`.
+
 ## How It Compares
 
 |  | Claude Code | Claw-Code | Aider | CoreCoder |

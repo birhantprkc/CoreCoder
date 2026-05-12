@@ -150,6 +150,8 @@ class HttpTool(Tool):
 quit             退出
 ```
 
+保存的会话 ID 会先安全化再作为文件名，恢复数据始终留在 `~/.corecoder/sessions` 目录内。
+
 ## 对比
 
 |  | Claude Code | Claw-Code | Aider | CoreCoder |

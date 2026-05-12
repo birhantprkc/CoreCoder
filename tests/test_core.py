@@ -89,6 +89,17 @@ def test_session_save_load():
     pathlib.Path.home().joinpath(".corecoder/sessions/pytest_test_session.json").unlink()
 
 
+def test_session_name_is_sanitized():
+    msgs = [{"role": "user", "content": "test message"}]
+    sid = save_session(msgs, "test-model", "../Research Notes!")
+
+    assert sid == "Research-Notes"
+    path = pathlib.Path.home().joinpath(".corecoder/sessions/Research-Notes.json")
+    assert path.exists()
+    assert load_session("../Research Notes!") is not None
+    path.unlink()
+
+
 def test_session_not_found():
     assert load_session("nonexistent_session_id") is None
 
