@@ -17,9 +17,20 @@
 
 </div>
 
-- **Readable end to end.** Read the whole engine in an afternoon: 1,081 lines of pure Python, with no magic hidden anywhere you can't follow it.
-- **Hackable.** Set a breakpoint on any line, change it, rerun, all on your own machine. It genuinely works, which makes this a living reference rather than a diagram. It just isn't meant to be your daily driver.
+- **Readable end to end.** Read the whole engine in an afternoon, with no magic hidden anywhere you can't follow it.
+- **Hackable.** Set a breakpoint on any line, change it, rerun, all on your own machine. It genuinely works, which makes this a living reference rather than a diagram.
 - **The gaps are the point.** It deliberately keeps only the minimal core; what's missing isn't half-finished, it's where you branch off and make it your own.
+
+## How it compares
+
+| | CoreCoder | Claude Code | aider | nanoGPT |
+|---|---|---|---|---|
+| Lines of code | ~1,081 engine / 1,714 total | hundreds of thousands (closed) | tens of thousands of Python | ~600 (two files) |
+| Time to read it all | one afternoon | can't (closed) | a few days of slogging | one afternoon |
+| Breakpoint, change, rerun? | yes, every line | no | yes, but there's a lot | yes |
+| What it's for | understand one, then fork your own | production coding assistant | terminal pair-programming | minimal GPT for teaching |
+
+The nanoGPT column is there as a reference point: minimal, readable, but it teaches you to train a GPT. CoreCoder is after the same thing, only the subject is an agent that actually edits code. Sitting it next to Claude Code and aider isn't about competing for their users. CoreCoder is the foundation you stand on while you learn from them and get going; it isn't in the same race.
 
 ## What this is
 
@@ -91,7 +102,7 @@ corecoder/
     └── base.py       tool base class                       27 lines
 ```
 
-Seven tools: `bash`, `read_file`, `write_file`, `edit_file`, `glob`, `grep`, and `agent` (which spawns a sub-agent). Add the packaging files like `__init__` and `__main__` and the package is 18 files; strip the CLI shell and config and the engine itself is about 1,081 lines.
+Seven tools: `bash`, `read_file`, `write_file`, `edit_file`, `glob`, `grep`, and `agent` (which spawns a sub-agent). Everything else is the CLI shell, config, and packaging wrapped around that engine core.
 
 ## A `while` loop is the whole agent
 
@@ -112,7 +123,7 @@ def chat(self, user_input):
     return "(hit the round limit)"
 ```
 
-That's the whole thing. The core skeleton is about twenty lines; counting parallel execution and the bookkeeping after a Ctrl+C interrupt, maybe forty. Almost everything else in CoreCoder's thousand-odd lines is there to clean up the mess that shows up once the loop runs against the real world. `llm.py` is the biggest file in the project, not because calling a model is hard, but because in a streamed response a single tool call's arguments arrive in several fragments, one after another, and you have to stitch them back together in order. A provider will occasionally hand you half a JSON object, or fill the `usage` field with null; rate limits (429), timeouts, dropped connections and 5xx all need backoff-and-retry, while the other 4xx should just raise instead of being retried into the ground. Even an OpenAI extension like `stream_options` gets handled: some providers reject it outright with a 400, so the code strips it and resends exactly once, only on a 400, and never stacks that on top of the retry backoff. Lay all this grunt work out and it's the genuinely hard engineering part of taking an agent from demo to delivery. The unglamorous part turns out to be the loop itself; the thousand lines of fallback around it are where the real work lives.
+That's the whole thing. The core skeleton is about twenty lines; counting parallel execution and the bookkeeping after a Ctrl+C interrupt, maybe forty. Almost everything else in CoreCoder's thousand-odd lines is there to clean up the mess the loop runs into once it meets the real world. `llm.py` ends up the biggest file in the project, not because calling a model is hard, but because a streamed response splinters each tool call's arguments into fragments you have to restitch in order, a provider will hand you half a JSON object or a null `usage` field, and 429s, timeouts, dropped connections and 5xx all need backoff-and-retry while the other 4xx should just raise. That unglamorous grunt work, not the loop, is where the real engineering of taking an agent from demo to delivery actually lives; the third essay follows it down to the line.
 
 Three decisions are worth a closer look, because they're the kind of call you can only make after you've understood how others did it, and they're judgments you can lift straight into your own fork.
 
@@ -161,17 +172,6 @@ Going deeper, the directions are out in the open too. None of the following is i
 - **No MCP, no RAG.** Wire up MCP to give it the external tool ecosystem, or add retrieval-based code location for big repos. Both are real ways to grow from a minimal core into your own stronger agent.
 
 The README only points; the seventh essay picks up the code details for each. Pick one and start; that's the whole reason the core is kept this small.
-
-## How it compares
-
-| | CoreCoder | Claude Code | aider | nanoGPT |
-|---|---|---|---|---|
-| Lines of code | ~1,081 engine / 1,714 total | hundreds of thousands (closed) | tens of thousands of Python | ~600 (two files) |
-| Time to read it all | one afternoon | can't (closed) | a few days of slogging | one afternoon |
-| Breakpoint, change, rerun? | yes, every line | no | yes, but there's a lot | yes |
-| What it's for | understand one, then fork your own | production coding assistant | terminal pair-programming | minimal GPT for teaching |
-
-The nanoGPT column is there as a reference point: minimal, readable, but it teaches you to train a GPT. CoreCoder is after the same thing, only the subject is an agent that actually edits code. Sitting it next to Claude Code and aider isn't about competing for their users. CoreCoder is the foundation you stand on while you learn from them and get going; it isn't in the same race.
 
 ## Commands
 
