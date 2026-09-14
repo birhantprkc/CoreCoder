@@ -3,8 +3,10 @@
 import re
 from pathlib import Path
 from typing import ClassVar
+from unittest import mock
 
 import pytest
+from openai import BadRequestError
 
 from corecoder import ALL_TOOLS, LLM, Agent, Config, __version__
 from corecoder import session as session_module
@@ -328,3 +330,93 @@ def test_todo_injection_tracks_updates():
 def test_agent_without_todo_tool_injects_nothing():
     agent = Agent(llm=LLM.__new__(LLM), tools=[get_tool("read_file")])
     assert "# Current task list" not in agent._full_messages()[0]["content"]
+
+
+# ---------------------------------------------------------------------------
+# LLM.chat() provider-dialect fallback (400 param adaptation)
+# ---------------------------------------------------------------------------
+
+
+class TestLLMParamFallback:
+    """Newer OpenAI models reject max_tokens / non-default temperature with a
+    400 naming the parameter; chat() adapts that one param and retries."""
+
+    @staticmethod
+    def _make_llm():
+        llm = LLM(model="gpt-5", api_key="sk-test", max_tokens=1024, temperature=0.7)
+        llm.client = mock.Mock()
+        return llm
+
+    @staticmethod
+    def _bad_request(msg):
+        import httpx
+
+        req = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
+        return BadRequestError(msg, response=httpx.Response(400, request=req), body=None)
+
+    @staticmethod
+    def _stream():
+        from types import SimpleNamespace
+
+        return [
+            SimpleNamespace(
+                usage=None,
+                choices=[SimpleNamespace(delta=SimpleNamespace(content="ok", tool_calls=None))],
+            )
+        ]
+
+    def _chat_with_failures(self, llm, failures):
+        create = llm.client.chat.completions.create
+        create.side_effect = [*failures, self._stream()]
+        result = llm.chat(messages=[{"role": "user", "content": "hi"}])
+        assert result.content == "ok"
+        return create
+
+    def test_max_tokens_translated_when_rejected(self):
+        llm = self._make_llm()
+        create = self._chat_with_failures(
+            llm,
+            [self._bad_request("Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead.")],
+        )
+        retry_kwargs = create.call_args_list[-1][1]
+        assert retry_kwargs["max_completion_tokens"] == 1024
+        assert "max_tokens" not in retry_kwargs
+
+    def test_temperature_dropped_when_rejected(self):
+        llm = self._make_llm()
+        create = self._chat_with_failures(
+            llm,
+            [self._bad_request("Unsupported value: 'temperature' does not support 0.7 with this model.")],
+        )
+        retry_kwargs = create.call_args_list[-1][1]
+        assert "temperature" not in retry_kwargs
+        assert retry_kwargs["max_tokens"] == 1024
+
+    def test_stream_options_still_dropped_on_first_400(self):
+        llm = self._make_llm()
+        create = self._chat_with_failures(llm, [self._bad_request("Bad request")])
+        retry_kwargs = create.call_args_list[-1][1]
+        assert "stream_options" not in retry_kwargs
+        assert retry_kwargs["max_tokens"] == 1024
+
+    def test_unrecognized_400_reraises(self):
+        llm = self._make_llm()
+        with pytest.raises(BadRequestError):
+            self._chat_with_failures(
+                llm,
+                [self._bad_request("Unsupported parameter: 'response_format' here"),
+                 self._bad_request("Unsupported parameter: 'response_format' here")],
+            )
+
+    def test_rejected_max_completion_tokens_does_not_loop(self):
+        """The max_tokens error message names max_completion_tokens, and the
+        substring must not re-trigger translation once translated."""
+        llm = self._make_llm()
+        create = self._chat_with_failures(
+            llm,
+            [self._bad_request("Unsupported parameter: 'max_tokens'. Use 'max_completion_tokens'."),
+             self._bad_request("Unsupported parameter: 'max_completion_tokens' is unknown here")],
+        )
+        # second failure surfaces because neither retry looped nor re-adapted
+        retry_kwargs = create.call_args_list[-1][1]
+        assert "max_completion_tokens" in retry_kwargs

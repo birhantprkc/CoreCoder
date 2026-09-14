@@ -81,6 +81,25 @@ _PRICING = {
 }
 
 
+def _adapt_rejected_param(params: dict, exc: BadRequestError) -> bool:
+    """Translate or drop one parameter a provider rejected with a 400.
+
+    Newer OpenAI models (gpt-5, o-series) accept only ``max_completion_tokens``
+    and the default temperature; the 400 message quotes the offender
+    (``'max_tokens'``). Quoted matching is load-bearing: the rejection text
+    for ``max_completion_tokens`` must not re-trigger the translation.
+    Returns False when nothing recognizable was rejected.
+    """
+    message = str(exc).lower()
+    if "'max_tokens'" in message and "max_tokens" in params:
+        params["max_completion_tokens"] = params.pop("max_tokens")
+        return True
+    if "'temperature'" in message and "temperature" in params:
+        params.pop("temperature")
+        return True
+    return False
+
+
 class LLM:
     def __init__(
         self,
@@ -123,17 +142,25 @@ class LLM:
         if tools:
             params["tools"] = tools
 
-        # stream_options is an OpenAI extension; fall back only when the provider
-        # rejects the param (400 BadRequest), not on transient errors that
-        # _call_with_retry already exhausted - otherwise we'd double the retries.
-        # LiteLLM never lands here: drop_params strips it for providers without
-        # support, so the fallback is unreachable on that path
+        # Provider-dialect fallbacks. A 400 that quotes a parameter is adapted
+        # (newer OpenAI models take max_completion_tokens, default temperature
+        # only); a 400 that names nothing drops stream_options once, matching
+        # the previous single-fallback behavior for servers that reject the
+        # OpenAI extension silently. The loop is bounded by the param set, and
+        # an unrecognized 400 re-raises instead of doubling _call_with_retry's
+        # exhausted retries. LiteLLM never lands here: drop_params strips
+        # unsupported keys on that path.
         params["stream_options"] = {"include_usage": True}
-        try:
-            stream = self._call_with_retry(params)
-        except BadRequestError:
-            params.pop("stream_options", None)
-            stream = self._call_with_retry(params)
+        while True:
+            try:
+                stream = self._call_with_retry(params)
+                break
+            except BadRequestError as e:
+                if _adapt_rejected_param(params, e):
+                    continue
+                if "stream_options" not in params:
+                    raise
+                params.pop("stream_options")
 
         content_parts: list[str] = []
         tc_map: dict[int, dict] = {}  # index -> {id, name, arguments_str}
