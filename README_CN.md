@@ -88,8 +88,8 @@ corecoder -p "给 parse_config() 加错误处理"   # 一次性模式，干完�
 ```
 corecoder/
 ├── agent.py        agent 主循环 + 并行工具执行       213 行   ← 从这里开始读
-├── llm.py          流式客户端 + 重试 + 成本统计       267 行
-├── context.py      三层上下文压缩                     221 行
+├── llm.py          流式客户端 + 重试 + 成本统计       294 行
+├── context.py      三层上下文压缩                     220 行
 ├── session.py      会话存盘 / 续聊 + 路径穿越防护      97 行
 ├── permissions.py  改动类工具的用户授权                48 行
 ├── hooks.py        工具调用前后的用户 shell 钩子        85 行
@@ -97,6 +97,8 @@ corecoder/
 ├── prompt.py       系统提示词                          41 行
 ├── cli.py          REPL + 斜杠命令 + 一次性模式        346 行
 ├── config.py       环境变量配置                        55 行
+├── checkpoints.py  /undo 快照与回滚                      38 行
+├── demo.py         离线端到端演示                       100 行
 └── tools/
     ├── bash.py       shell + 危险命令闸 + cd 追踪      134 行
     ├── edit.py       唯一匹配搜索替换 + diff            96 行
@@ -162,7 +164,7 @@ def chat(self, user_input):
 
 读懂之后，最自然的下一步就是 fork。起手不用伤筋动骨：
 
-- **换个你常用的模型。** 就是上面那两个环境变量，`llm.py`（267 行）是所有 provider 适配的入口。
+- **换个你常用的模型。** 就是上面那两个环境变量，`llm.py`（294 行）是所有 provider 适配的入口。
 - **加一件你自己的工具。** 照 `tools/base.py`（27 行）的工具基类写个新文件，跑测试、抓网页、调 LSP 都行，第二篇文章末尾手把手带你写第一个。
 - **改系统提示词。** `prompt.py` 才 41 行，改一句就能看到 agent 的脾气变了，是门槛最低的「改一处就有反馈」。
 - **直接当库 import。** 顶层导出了 `Agent`、`LLM`、`Config`，能嵌进你自己的程序：

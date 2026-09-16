@@ -2,7 +2,7 @@
 
 # CoreCoder
 
-**The nanoGPT of coding agents. A 1.2k-line engine inside 2,398 readable lines of pure Python: understand how a coding agent actually works, then fork your own.**
+**The nanoGPT of coding agents. A 1.2k-line engine inside 2,424 readable lines of pure Python: understand how a coding agent actually works, then fork your own.**
 
 *learn from it · fork it · ship something better*
 
@@ -25,7 +25,7 @@
 
 | | CoreCoder | Claude Code | aider | nanoGPT |
 |---|---|---|---|---|
-| Lines of code | ~1,171 engine / 2,398 total | hundreds of thousands (closed) | tens of thousands of Python | ~600 (two files) |
+| Lines of code | ~1,192 engine / 2,424 total | hundreds of thousands (closed) | tens of thousands of Python | ~600 (two files) |
 | Time to read it all | one afternoon | can't (closed) | a few days of slogging | one afternoon |
 | Breakpoint, change, rerun? | yes, every line | no | yes, but there's a lot | yes |
 | What it's for | understand one, then fork your own | production coding assistant | terminal pair-programming | minimal GPT for teaching |
@@ -88,8 +88,8 @@ Laid out flat, the whole project is this big. Skim it before you clone and you'l
 ```
 corecoder/
 ├── agent.py        agent loop + parallel tool exec       213 lines   ← start here
-├── llm.py          streaming client + retry + cost        267 lines
-├── context.py      three-tier context compaction          221 lines
+├── llm.py          streaming client + retry + cost        294 lines
+├── context.py      three-tier context compaction          220 lines
 ├── session.py      save / resume + path-traversal guard    97 lines
 ├── permissions.py  consent for mutating tools              48 lines
 ├── hooks.py        Pre/PostToolUse shell hooks             85 lines
@@ -97,6 +97,8 @@ corecoder/
 ├── prompt.py       system prompt                           41 lines
 ├── cli.py          REPL + slash commands + one-shot       346 lines
 ├── config.py       env-var config                          55 lines
+├── checkpoints.py  /undo snapshot and restore                38 lines
+├── demo.py         offline end-to-end demo                 100 lines
 └── tools/
     ├── bash.py       shell + dangerous-command gate + cd  134 lines
     ├── edit.py       unique-match search/replace + diff    96 lines
