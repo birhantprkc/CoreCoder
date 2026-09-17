@@ -52,3 +52,20 @@ def test_failed_edit_leaves_no_checkpoint(tmp_path):
     assert result.startswith("Error:")
     assert checkpoints.pending() == 0
     assert checkpoints.undo() == "Nothing to undo."
+
+
+def test_undo_recreates_a_deleted_parent_tree(tmp_path):
+    # bash side effects are untracked: if the parent dir is removed between
+    # the checkpoint and /undo, restore recreates it instead of dying.
+    f = tmp_path / "deep" / "nested" / "a.py"
+    f.parent.mkdir(parents=True)
+    f.write_text("v1\n", encoding="utf-8")
+    EditFileTool().execute(str(f), "v1", "v2")
+    import shutil
+
+    shutil.rmtree(tmp_path / "deep")
+    assert not f.parent.exists()
+
+    msg = checkpoints.undo()
+    assert msg == f"Restored {f} (recreated missing parent directories)."
+    assert f.read_text() == "v1\n"

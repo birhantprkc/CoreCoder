@@ -26,7 +26,13 @@ def undo() -> str:
     if prior is None:
         p.unlink(missing_ok=True)
         return f"Removed {path_str} (created this session)."
+    # the parent tree may be gone by now: bash side effects are untracked, so
+    # recreate it instead of dying on FileNotFoundError
+    recreated = not p.parent.exists()
+    p.parent.mkdir(parents=True, exist_ok=True)
     p.write_bytes(prior)
+    if recreated:
+        return f"Restored {path_str} (recreated missing parent directories)."
     return f"Restored {path_str}."
 
 
