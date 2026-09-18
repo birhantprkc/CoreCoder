@@ -9,7 +9,6 @@ Claude Code's BashTool is 1,143 lines. This is the distilled version:
 
 import os
 import re
-import shlex
 import subprocess
 import threading
 from typing import ClassVar
@@ -113,6 +112,32 @@ def _check_dangerous(cmd: str) -> str | None:
     return None
 
 
+def _split_words(statement: str) -> list[str]:
+    """Split one statement into words on unquoted whitespace, stripping the
+    quotes. Backslashes are kept verbatim (Windows paths must not lose them,
+    so this deliberately does not use shlex's posix escape processing)."""
+    words: list[str] = []
+    buf: list[str] = []
+    quote: str | None = None
+    for ch in statement:
+        if quote is not None:
+            if ch == quote:
+                quote = None
+            else:
+                buf.append(ch)
+        elif ch in ("'", '"'):
+            quote = ch
+        elif ch.isspace():
+            if buf:
+                words.append("".join(buf))
+                buf = []
+        else:
+            buf.append(ch)
+    if buf:
+        words.append("".join(buf))
+    return words
+
+
 def _split_statements(command: str) -> list[list[str]]:
     """Split a shell command into per-statement word lists on `&&` and `;`,
     honoring quotes. Words come back dequoted, so `cd "my dir"` arrives as
@@ -124,9 +149,6 @@ def _split_statements(command: str) -> list[list[str]]:
     while i < len(command):
         ch = command[i]
         if quote is not None:
-            if ch == "\\" and quote == '"' and i + 1 < len(command):
-                i += 2
-                continue
             if ch == quote:
                 quote = None
         elif ch in ("'", '"'):
@@ -144,13 +166,7 @@ def _split_statements(command: str) -> list[list[str]]:
     tail = command[start:]
     if tail.strip():
         statements.append(tail)
-    words: list[list[str]] = []
-    for statement in statements:
-        try:
-            words.append(shlex.split(statement))
-        except ValueError:
-            continue  # unbalanced quotes: not a statement we can reason about
-    return words
+    return [_split_words(statement) for statement in statements]
 
 
 def _update_cwd(command: str, current_cwd: str):

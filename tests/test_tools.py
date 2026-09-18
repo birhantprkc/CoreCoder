@@ -200,6 +200,14 @@ def test_bash_cwd_quoted_target_with_spaces(tmp_path):
         bash_mod._local.cwd = saved
 
 
+def test_bash_cwd_backslash_path_not_mangled():
+    """Windows-style backslash targets must survive the splitter verbatim;
+    shlex posix mode would eat the backslashes and the isdir check would fail."""
+    from corecoder.tools.bash import _split_words
+
+    assert _split_words(r"cd C:\Users\runneradmin\a") == ["cd", r"C:\Users\runneradmin\a"]
+
+
 def test_bash_truncates_long_output():
     bash = get_tool("bash")
     r = bash.execute(command=f'"{sys.executable}" -c "print(\'x\' * 20000)"')
