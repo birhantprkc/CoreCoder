@@ -117,20 +117,40 @@ def _split_statements(command: str) -> list[list[str]]:
     """Split a shell command into per-statement word lists on `&&` and `;`,
     honoring quotes. Words come back dequoted, so `cd "my dir"` arrives as
     ["cd", "my dir"] and a separator inside quotes never splits."""
-    lex = shlex.shlex(command, posix=True, punctuation_chars=";&")
-    lex.whitespace_split = True
-    statements: list[list[str]] = []
-    current: list[str] = []
-    for token in lex:
-        if token in (";", "&&"):
-            if current:
-                statements.append(current)
-                current = []
+    statements: list[str] = []
+    quote: str | None = None
+    start = 0
+    i = 0
+    while i < len(command):
+        ch = command[i]
+        if quote is not None:
+            if ch == "\\" and quote == '"' and i + 1 < len(command):
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+        elif ch in ("'", '"'):
+            quote = ch
         else:
-            current.append(token)
-    if current:
-        statements.append(current)
-    return statements
+            is_and = command[i : i + 2] == "&&"
+            if ch == ";" or is_and:
+                statement = command[start:i]
+                if statement.strip():
+                    statements.append(statement)
+                i += 2 if is_and else 1
+                start = i
+                continue
+        i += 1
+    tail = command[start:]
+    if tail.strip():
+        statements.append(tail)
+    words: list[list[str]] = []
+    for statement in statements:
+        try:
+            words.append(shlex.split(statement))
+        except ValueError:
+            continue  # unbalanced quotes: not a statement we can reason about
+    return words
 
 
 def _update_cwd(command: str, current_cwd: str):
