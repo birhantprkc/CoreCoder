@@ -160,6 +160,46 @@ def test_bash_cwd_is_thread_local(tmp_path):
     assert seen["b"] == os.path.normpath(str(tmp_path / "tb"))
 
 
+def test_bash_cwd_ignores_separators_inside_quotes(tmp_path):
+    """`echo "x; cd a"` is one statement: the quoted `cd a` must not move us."""
+    import corecoder.tools.bash as bash_mod
+
+    (tmp_path / "a").mkdir()
+    saved = str(tmp_path)
+    try:
+        bash_mod._local.cwd = saved
+        bash_mod._update_cwd('echo "x; cd a"', saved)
+        assert bash_mod._local.cwd == saved
+    finally:
+        bash_mod._local.cwd = saved
+
+
+def test_bash_cwd_bare_cd_goes_home(tmp_path):
+    """A bare `cd` with no target lands in $HOME, same as the real shell."""
+    import corecoder.tools.bash as bash_mod
+
+    (tmp_path / "a").mkdir()
+    saved = str(tmp_path)
+    try:
+        bash_mod._update_cwd("cd a && cd", saved)
+        assert bash_mod._local.cwd == os.path.normpath(os.path.expanduser("~"))
+    finally:
+        bash_mod._local.cwd = saved
+
+
+def test_bash_cwd_quoted_target_with_spaces(tmp_path):
+    """`cd "quoted dir"` must resolve the space-bearing name as one token."""
+    import corecoder.tools.bash as bash_mod
+
+    (tmp_path / "quoted dir").mkdir()
+    saved = str(tmp_path)
+    try:
+        bash_mod._update_cwd('cd "quoted dir"', saved)
+        assert bash_mod._local.cwd == os.path.normpath(str(tmp_path / "quoted dir"))
+    finally:
+        bash_mod._local.cwd = saved
+
+
 def test_bash_truncates_long_output():
     bash = get_tool("bash")
     r = bash.execute(command=f'"{sys.executable}" -c "print(\'x\' * 20000)"')

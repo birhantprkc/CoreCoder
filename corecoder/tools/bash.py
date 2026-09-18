@@ -9,6 +9,7 @@ Claude Code's BashTool is 1,143 lines. This is the distilled version:
 
 import os
 import re
+import shlex
 import subprocess
 import threading
 from typing import ClassVar
@@ -112,23 +113,41 @@ def _check_dangerous(cmd: str) -> str | None:
     return None
 
 
+def _split_statements(command: str) -> list[list[str]]:
+    """Split a shell command into per-statement word lists on `&&` and `;`,
+    honoring quotes. Words come back dequoted, so `cd "my dir"` arrives as
+    ["cd", "my dir"] and a separator inside quotes never splits."""
+    lex = shlex.shlex(command, posix=True, punctuation_chars=";&")
+    lex.whitespace_split = True
+    statements: list[list[str]] = []
+    current: list[str] = []
+    for token in lex:
+        if token in (";", "&&"):
+            if current:
+                statements.append(current)
+                current = []
+        else:
+            current.append(token)
+    if current:
+        statements.append(current)
+    return statements
+
+
 def _update_cwd(command: str, current_cwd: str):
     """Track directory changes from cd commands, per thread."""
-    # walk each cd in a && chain, resolving relative targets against the dir the
+    # walk each cd in a && or ; chain, resolving relative targets against the dir the
     # previous cd landed in (not the original cwd) so `cd a && cd b` ends in a/b.
     # a parenthesized group is a subshell — `( cd a )` never changes this shell's
-    # cwd, so scrub those before scanning; `cd a; cd b` splits on `;` too.
+    # cwd, so scrub those before scanning; a bare `cd` goes home.
     scrubbed = re.sub(r"\([^()]*\)", " ", command)
     running = current_cwd
     changed = False
-    for part in re.split(r"&&|;", scrubbed):
-        part = part.strip()
-        if part.startswith("cd "):
-            target = part[3:].strip().strip("'\"")
-            if target:
-                new_dir = os.path.normpath(os.path.join(running, os.path.expanduser(target)))
-                if os.path.isdir(new_dir):
-                    running = new_dir
-                    changed = True
+    for words in _split_statements(scrubbed):
+        if words and words[0] == "cd":
+            target = words[1] if len(words) > 1 else "~"
+            new_dir = os.path.normpath(os.path.join(running, os.path.expanduser(target)))
+            if os.path.isdir(new_dir):
+                running = new_dir
+                changed = True
     if changed:
         _local.cwd = running
