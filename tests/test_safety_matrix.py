@@ -6,6 +6,7 @@ model is told. These combinations are the part of CoreCoder that must never
 be wrong, because it is where readers copy the pattern from.
 """
 
+import sys
 from typing import ClassVar
 
 import pytest
@@ -26,7 +27,14 @@ def _write_call(call_id, path):
 
 
 def _blocking_hook(reason="hook says no"):
-    return {"matcher": "*", "command": f"echo {reason} >&2; exit 2"}
+    # Hook commands run through the platform shell (cmd.exe on Windows), so
+    # POSIX-only syntax (`>&2`, `;`, `&&`) breaks the veto there. python -c
+    # runs identically under both shells, keeping the exit-2 contract real on
+    # every lane.
+    return {
+        "matcher": "*",
+        "command": f'{sys.executable} -c "import sys; sys.stderr.write({reason!r}); sys.exit(2)"',
+    }
 
 
 class _BoomTool(Tool):
@@ -100,7 +108,16 @@ def test_a_hook_can_veto_a_read_only_tool(tmp_path):
 def test_post_hook_observes_only_calls_that_actually_executed(tmp_path):
     """A blocked call must not show up in post-tool logs as if it ran."""
     log = tmp_path / "post.log"
-    post = [{"matcher": "*", "command": f"cat >> {log}"}]
+    post = [
+        {
+            "matcher": "*",
+            "command": (
+                f'{sys.executable} -c "import sys; '
+                f"open(sys.argv[1], 'a', encoding='utf-8').write(sys.stdin.read())"
+                f'" "{log}"'
+            ),
+        }
+    ]
     agent = Agent(
         llm=ScriptedLLM([
             LLMResponse(tool_calls=[
@@ -111,7 +128,10 @@ def test_post_hook_observes_only_calls_that_actually_executed(tmp_path):
         ]),
         tools=[WriteFileTool()],
         permission=Permission(allow_all=True),
-        hooks=Hooks(pre=[{"matcher": "write_file", "command": 'grep -q a.txt && exit 2 || exit 0'}], post=post),
+        hooks=Hooks(pre=[{"matcher": "write_file", "command": (
+            f'{sys.executable} -c "import sys; '
+            "sys.exit(2 if 'a.txt' in sys.stdin.read() else 0)\""
+        )}], post=post),
     )
 
     agent.chat("go")
