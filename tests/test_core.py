@@ -349,7 +349,12 @@ class TestLLMParamFallback:
 
     @staticmethod
     def _bad_request(msg):
-        import httpx
+        try:
+            import httpx
+        except ModuleNotFoundError:
+            # openai>=3.14 moved its HTTP layer from httpx to httpx2; the
+            # SDK's error types take a Response from whichever is installed.
+            import httpx2 as httpx
 
         req = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
         return BadRequestError(msg, response=httpx.Response(400, request=req), body=None)
