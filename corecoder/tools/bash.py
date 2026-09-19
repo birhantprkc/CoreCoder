@@ -20,6 +20,20 @@ from .base import Tool
 # shared global: each worker thread carries its own cwd. See article 05.
 _local = threading.local()
 
+
+def get_tracked_cwd() -> str | None:
+    """The cwd tracked for this thread, if any."""
+    return getattr(_local, "cwd", None)
+
+
+def set_tracked_cwd(path: str | None) -> None:
+    """Set the tracked cwd for this thread (session handoff at pool edges)."""
+    if path is None:
+        if hasattr(_local, "cwd"):
+            del _local.cwd
+    else:
+        _local.cwd = path
+
 # patterns that could wreck the filesystem or leak secrets
 _DANGEROUS_PATTERNS = [
     # recursive delete aimed at root/home (force flag optional)
@@ -66,7 +80,7 @@ class BashTool(Tool):
             return f"⚠ Blocked: {warning}\nCommand: {command}\nIf intentional, modify the command to be more specific."
 
         # use this thread's own tracked working directory
-        cwd = getattr(_local, "cwd", None) or os.getcwd()
+        cwd = get_tracked_cwd() or os.getcwd()
 
         try:
             proc = subprocess.run(

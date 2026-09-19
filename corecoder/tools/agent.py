@@ -54,6 +54,11 @@ class AgentTool(Tool):
         )
 
         # a sub-agent failure comes back as text, never propagates into the parent
+        # sub-agents share this thread's tracked cwd; restore it on return so a
+        # sub-agent's own cd never leaks into the parent's shell state
+        from .bash import get_tracked_cwd, set_tracked_cwd
+
+        parent_cwd = get_tracked_cwd()
         try:
             result = sub.chat(task)
             # trim long results to avoid blowing up parent's context
@@ -62,3 +67,6 @@ class AgentTool(Tool):
             return f"[Sub-agent completed]\n{result}"
         except Exception as e:  # noqa: BLE001
             return f"Sub-agent error: {e}"
+        finally:
+            if get_tracked_cwd() != parent_cwd:
+                set_tracked_cwd(parent_cwd)

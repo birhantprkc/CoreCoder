@@ -1,6 +1,11 @@
 """Base class for all tools."""
 
+import threading
 from abc import ABC, abstractmethod
+
+# File-mutating tools (write_file/edit_file) serialize on this, so a parallel
+# batch can't interleave read-modify-write on the same file and lose an edit.
+FILE_MUTATION_LOCK = threading.Lock()
 
 
 class Tool(ABC):

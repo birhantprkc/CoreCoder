@@ -44,33 +44,36 @@ class EditFileTool(Tool):
     }
 
     def execute(self, file_path: str, old_string: str, new_string: str) -> str:
+        from .base import FILE_MUTATION_LOCK
+
         try:
-            p = Path(file_path).expanduser().resolve()
-            if not p.exists():
-                return f"Error: {file_path} not found"
+            with FILE_MUTATION_LOCK:
+                p = Path(file_path).expanduser().resolve()
+                if not p.exists():
+                    return f"Error: {file_path} not found"
 
-            try:
-                content = p.read_text(encoding="utf-8")
-            except UnicodeDecodeError:
-                return f"Error: {file_path} is not a UTF-8 text file (edit_file only edits text files)"
-            occurrences = content.count(old_string)
+                try:
+                    content = p.read_text(encoding="utf-8")
+                except UnicodeDecodeError:
+                    return f"Error: {file_path} is not a UTF-8 text file (edit_file only edits text files)"
+                occurrences = content.count(old_string)
 
-            if occurrences == 0:
-                preview = content[:500] + ("..." if len(content) > 500 else "")
-                return (
-                    f"Error: old_string not found in {file_path}.\n"
-                    f"File starts with:\n{preview}"
-                )
-            if occurrences > 1:
-                return (
-                    f"Error: old_string appears {occurrences} times in {file_path}. "
-                    f"Include more surrounding lines to make it unique."
-                )
+                if occurrences == 0:
+                    preview = content[:500] + ("..." if len(content) > 500 else "")
+                    return (
+                        f"Error: old_string not found in {file_path}.\n"
+                        f"File starts with:\n{preview}"
+                    )
+                if occurrences > 1:
+                    return (
+                        f"Error: old_string appears {occurrences} times in {file_path}. "
+                        f"Include more surrounding lines to make it unique."
+                    )
 
-            new_content = content.replace(old_string, new_string, 1)
-            _record_checkpoint(p)
-            p.write_text(new_content, encoding="utf-8")
-            _changed_files.add(str(p))
+                new_content = content.replace(old_string, new_string, 1)
+                _record_checkpoint(p)
+                p.write_text(new_content, encoding="utf-8")
+                _changed_files.add(str(p))
 
             # generate a unified diff so the user/LLM can see exactly what changed
             diff = _unified_diff(content, new_content, str(p))

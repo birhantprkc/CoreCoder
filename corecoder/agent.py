@@ -173,6 +173,8 @@ class Agent:
         executing tools while the model is still generating.  We simplify to:
         when the model returns N tool calls at once, run them in parallel.
         """
+        from .tools.bash import get_tracked_cwd, set_tracked_cwd
+
         for tc in tool_calls:
             if on_tool:
                 on_tool(tc.name, tc.arguments)
@@ -180,14 +182,33 @@ class Agent:
         # hooks and consent are settled up front on this thread: prompting
         # from pool workers would interleave several prompts on one terminal
         results = [self._pre_hooks(tc) or self._permit(tc) for tc in tool_calls]
+        # the tracked cwd is thread-local, so pool workers would otherwise
+        # start from the launch directory: hand the session cwd in, and merge
+        # any cd back in call order so the batch behaves like a sequence
+        session_cwd = get_tracked_cwd()
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+            def run(i, tc, base_cwd):
+                is_bash = tc.name == "bash"
+                if is_bash and base_cwd is not None:
+                    set_tracked_cwd(base_cwd)
+                out = self._exec_tool(tc)
+                if not is_bash:
+                    return i, out, None
+                cwd_after = get_tracked_cwd()
+                # only a worker that actually moved the dir reports back; a
+                # sibling that merely inherited the base must not revert a cd
+                return i, out, cwd_after if cwd_after != base_cwd else None
+
             futures = {
-                i: pool.submit(self._exec_tool, tc)
+                i: pool.submit(run, i, tc, session_cwd)
                 for i, tc in enumerate(tool_calls)
                 if results[i] is None
             }
             for i, future in futures.items():
-                results[i] = future.result()
+                i, results[i], worker_cwd = future.result()
+                if worker_cwd is not None:
+                    session_cwd = worker_cwd
+                    set_tracked_cwd(worker_cwd)
         for i in futures:
             self._post_hooks(tool_calls[i], results[i])
         return results
@@ -211,3 +232,8 @@ class Agent:
     def reset(self):
         """Clear conversation history."""
         self.messages.clear()
+        # a user-visible reset must not leak the dead conversation's checklist
+        # into the next system prompt
+        todo = self._tool_by_name.get("todo_write")
+        if isinstance(todo, TodoWriteTool):
+            todo._tasks = []

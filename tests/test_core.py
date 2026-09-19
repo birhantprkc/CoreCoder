@@ -235,6 +235,93 @@ def test_write_tracks_changed_files(tmp_path):
 
 # --- Agent tool execution ---
 
+def test_parallel_bash_calls_inherit_and_merge_session_cwd(tmp_path):
+    """Pool workers must start from the session cwd, not the launch dir, and a
+    cd inside the batch moves the session cwd afterwards."""
+    from corecoder.tools.bash import get_tracked_cwd, set_tracked_cwd
+
+    bash = get_tool("bash")
+    agent = Agent(llm=LLM.__new__(LLM), tools=[bash])
+    target = tmp_path / "proj"
+    target.mkdir()
+    (tmp_path / "marker.txt").write_text("x")
+
+    class _TC:
+        def __init__(self, i, cmd):
+            self.name, self.id, self.arguments = "bash", str(i), {"command": cmd}
+
+    prev = get_tracked_cwd()
+    set_tracked_cwd(str(tmp_path))
+    try:
+        results = agent._exec_tools_parallel([_TC(1, "pwd"), _TC(2, "ls marker.txt")])
+        assert str(tmp_path) in results[0]
+        assert "marker.txt" in results[1]
+
+        # a cd in the batch lands on the session afterwards; siblings in the
+        # same batch still start from the pre-batch cwd (parallel, not serial)
+        results = agent._exec_tools_parallel([_TC(3, f"cd {target}"), _TC(4, "pwd")])
+        assert get_tracked_cwd() == str(target)
+        assert str(tmp_path) in results[1]
+    finally:
+        set_tracked_cwd(prev)
+
+
+def test_parallel_edits_to_one_file_both_land(tmp_path):
+    """Two edit_file calls on one file in one batch must not lose either."""
+    edit = get_tool("edit_file")
+    agent = Agent(llm=LLM.__new__(LLM), tools=[edit])
+    f = tmp_path / "a.txt"
+    f.write_text("one\ntwo\nthree\n")
+
+    class _TC:
+        def __init__(self, i, old, new):
+            self.name, self.id = "edit_file", str(i)
+            self.arguments = {"file_path": str(f), "old_string": old, "new_string": new}
+
+    results = agent._exec_tools_parallel([_TC(1, "one", "1"), _TC(2, "three", "3")])
+    assert all(r.startswith("Edited") for r in results)
+    assert f.read_text() == "1\ntwo\n3\n"
+
+
+def test_sub_agent_cwd_does_not_leak_into_parent(tmp_path, monkeypatch):
+    """A sub-agent's own cd must not move the parent's tracked cwd."""
+    from corecoder.agent import Agent as CoreAgent
+    from corecoder.tools.agent import AgentTool
+    from corecoder.tools.bash import get_tracked_cwd, set_tracked_cwd
+
+    parent = Agent(llm=LLM.__new__(LLM), tools=[])
+    tool = AgentTool()
+    tool._parent_agent = parent
+    target = tmp_path / "sub"
+    target.mkdir()
+
+    def fake_chat(self, text, **kwargs):
+        set_tracked_cwd(str(target))  # the sub-agent cd's somewhere else
+        return "done"
+
+    monkeypatch.setattr(CoreAgent, "chat", fake_chat)
+    prev = get_tracked_cwd()
+    set_tracked_cwd(str(tmp_path))
+    try:
+        assert tool.execute(task="x") == "[Sub-agent completed]\ndone"
+        assert get_tracked_cwd() == str(tmp_path)
+    finally:
+        set_tracked_cwd(prev)
+
+
+def test_reset_clears_todo_list():
+    """/reset must drop the dead conversation's checklist from the system prompt."""
+    from corecoder.tools.todo import TodoWriteTool
+
+    todo = TodoWriteTool()
+    agent = Agent(llm=LLM.__new__(LLM), tools=[todo])
+    todo.execute(tasks=[{"content": "fix parser bug", "status": "in_progress"}])
+    assert "fix parser bug" in agent._full_messages()[0]["content"]
+    agent.reset()
+    assert todo._tasks == []
+    assert "# Current task list" not in agent._full_messages()[0]["content"]
+
+
 def test_agent_tool_scope_is_per_instance():
     """An Agent restricted to a subset of tools must not resolve tools outside it."""
     only_read = [get_tool("read_file")]

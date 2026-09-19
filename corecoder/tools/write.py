@@ -30,12 +30,15 @@ class WriteFileTool(Tool):
     }
 
     def execute(self, file_path: str, content: str) -> str:
+        from .base import FILE_MUTATION_LOCK
+
         try:
-            p = Path(file_path).expanduser().resolve()
-            p.parent.mkdir(parents=True, exist_ok=True)
-            _record_checkpoint(p)
-            p.write_text(content, encoding="utf-8")
-            _changed_files.add(str(p))
+            with FILE_MUTATION_LOCK:
+                p = Path(file_path).expanduser().resolve()
+                p.parent.mkdir(parents=True, exist_ok=True)
+                _record_checkpoint(p)
+                p.write_text(content, encoding="utf-8")
+                _changed_files.add(str(p))
             n_lines = content.count("\n") + (1 if content and not content.endswith("\n") else 0)
             return f"Wrote {n_lines} lines to {file_path}"
         except Exception as e:  # noqa: BLE001
