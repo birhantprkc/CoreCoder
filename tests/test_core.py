@@ -240,6 +240,14 @@ def test_parallel_bash_calls_inherit_and_merge_session_cwd(tmp_path):
     cd inside the batch moves the session cwd afterwards."""
     from corecoder.tools.bash import get_tracked_cwd, set_tracked_cwd
 
+    def norm_dir(s: str) -> str:
+        # pwd prints the shell's own form: git-bash gives /c/Users/... where
+        # Python gives C:\Users\...; compare both in one canonical shape
+        s = s.strip().replace("\\", "/").rstrip("/").lower()
+        if len(s) >= 3 and s[0] == "/" and s[2] == "/" and s[1].isalpha():
+            s = s[1] + ":/" + s[3:]
+        return s
+
     bash = get_tool("bash")
     agent = Agent(llm=LLM.__new__(LLM), tools=[bash])
     target = tmp_path / "proj"
@@ -254,14 +262,14 @@ def test_parallel_bash_calls_inherit_and_merge_session_cwd(tmp_path):
     set_tracked_cwd(str(tmp_path))
     try:
         results = agent._exec_tools_parallel([_TC(1, "pwd"), _TC(2, "ls marker.txt")])
-        assert str(tmp_path) in results[0]
+        assert norm_dir(str(tmp_path)) in norm_dir(results[0])
         assert "marker.txt" in results[1]
 
         # a cd in the batch lands on the session afterwards; siblings in the
         # same batch still start from the pre-batch cwd (parallel, not serial)
         results = agent._exec_tools_parallel([_TC(3, f"cd {target}"), _TC(4, "pwd")])
         assert get_tracked_cwd() == str(target)
-        assert str(tmp_path) in results[1]
+        assert norm_dir(str(tmp_path)) in norm_dir(results[1])
     finally:
         set_tracked_cwd(prev)
 
