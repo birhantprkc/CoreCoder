@@ -520,3 +520,201 @@ class TestLLMParamFallback:
         # second failure surfaces because neither retry looped nor re-adapted
         retry_kwargs = create.call_args_list[-1][1]
         assert "max_completion_tokens" in retry_kwargs
+
+
+# ---------------------------------------------------------------------------
+# LLM.chat() reasoning passthrough and mid-stream retry
+# ---------------------------------------------------------------------------
+
+
+class TestReasoningPassthrough:
+    """Thinking models stream reasoning_content next to content. It is shown
+    through on_reasoning but never mixed into the reply or the history."""
+
+    @staticmethod
+    def _make_llm():
+        llm = LLM(model="deepseek-reasoner", api_key="sk-test")
+        llm.client = mock.Mock()
+        return llm
+
+    @staticmethod
+    def _stream():
+        from types import SimpleNamespace
+
+        return [
+            SimpleNamespace(
+                usage=None,
+                choices=[SimpleNamespace(delta=SimpleNamespace(
+                    content=None, tool_calls=None, reasoning_content="think "))],
+            ),
+            SimpleNamespace(
+                usage=None,
+                choices=[SimpleNamespace(delta=SimpleNamespace(
+                    content="answer", tool_calls=None, reasoning_content=None))],
+            ),
+            SimpleNamespace(
+                usage=SimpleNamespace(prompt_tokens=5, completion_tokens=3),
+                choices=[SimpleNamespace(delta=SimpleNamespace(
+                    content=None, tool_calls=None, reasoning_content="hard"))],
+            ),
+        ]
+
+    def test_reasoning_forwarded_and_content_clean(self):
+        llm = self._make_llm()
+        llm.client.chat.completions.create.return_value = self._stream()
+        reasoning_parts = []
+        result = llm.chat(
+            messages=[{"role": "user", "content": "hi"}],
+            on_reasoning=reasoning_parts.append,
+        )
+        assert reasoning_parts == ["think ", "hard"]
+        assert result.content == "answer"
+        # reasoning must not leak into the history message
+        assert "think" not in str(result.message)
+        assert llm.total_prompt_tokens == 5
+        assert llm.total_completion_tokens == 3
+
+    def test_reasoning_without_callback_is_dropped(self):
+        llm = self._make_llm()
+        llm.client.chat.completions.create.return_value = self._stream()
+        result = llm.chat(messages=[{"role": "user", "content": "hi"}])
+        assert result.content == "answer"
+
+    def test_openrouter_reasoning_field_also_forwarded(self):
+        # aggregators normalize the chain-of-thought onto delta.reasoning
+        from types import SimpleNamespace
+
+        llm = self._make_llm()
+        llm.client.chat.completions.create.return_value = [
+            SimpleNamespace(
+                usage=None,
+                choices=[SimpleNamespace(delta=SimpleNamespace(
+                    content="answer", tool_calls=None, reasoning="ponder"))],
+            ),
+        ]
+        reasoning_parts = []
+        result = llm.chat(
+            messages=[{"role": "user", "content": "hi"}],
+            on_reasoning=reasoning_parts.append,
+        )
+        assert reasoning_parts == ["ponder"]
+        assert result.content == "answer"
+
+
+class _DyingStream:
+    """Yields one chunk, then raises like a dropped connection mid-stream."""
+
+    def __init__(self, exc):
+        self._exc = exc
+        self._yielded = False
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        from types import SimpleNamespace
+
+        if not self._yielded:
+            self._yielded = True
+            return SimpleNamespace(
+                usage=None,
+                choices=[SimpleNamespace(delta=SimpleNamespace(
+                    content="part", tool_calls=None, reasoning_content=None))],
+            )
+        raise self._exc
+
+
+class TestMidStreamRetry:
+    """A stream that dies partway is re-issued wholesale; create-time
+    transients stay inside _call_with_retry and never double up."""
+
+    @staticmethod
+    def _make_llm():
+        llm = LLM(model="gpt-4o", api_key="sk-test")
+        llm.client = mock.Mock()
+        return llm
+
+    @staticmethod
+    def _good_stream():
+        from types import SimpleNamespace
+
+        return iter([SimpleNamespace(
+            usage=SimpleNamespace(prompt_tokens=7, completion_tokens=2),
+            choices=[SimpleNamespace(delta=SimpleNamespace(
+                content="full", tool_calls=None, reasoning_content=None))],
+        )])
+
+    @staticmethod
+    def _connection_error():
+        try:
+            import httpx
+        except ModuleNotFoundError:
+            import httpx2 as httpx
+
+        from openai import APIConnectionError
+
+        return APIConnectionError(
+            request=httpx.Request("POST", "https://api.openai.com/v1/chat/completions"))
+
+    @staticmethod
+    def _server_error():
+        try:
+            import httpx
+        except ModuleNotFoundError:
+            import httpx2 as httpx
+
+        from openai import InternalServerError
+
+        req = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
+        return InternalServerError(
+            "boom", response=httpx.Response(500, request=req), body=None)
+
+    def test_connection_drop_mid_stream_retries(self):
+        llm = self._make_llm()
+        create = llm.client.chat.completions.create
+        create.side_effect = [
+            _DyingStream(self._connection_error()),
+            self._good_stream(),
+        ]
+        with mock.patch("corecoder.llm.time.sleep"):
+            result = llm.chat(messages=[{"role": "user", "content": "hi"}])
+        assert result.content == "full"
+        assert create.call_count == 2
+        # usage comes only from the successful attempt, never double counted
+        assert llm.total_prompt_tokens == 7
+        assert llm.total_completion_tokens == 2
+
+    def test_server_error_mid_stream_retries(self):
+        llm = self._make_llm()
+        create = llm.client.chat.completions.create
+        create.side_effect = [
+            _DyingStream(self._server_error()),
+            self._good_stream(),
+        ]
+        with mock.patch("corecoder.llm.time.sleep"):
+            result = llm.chat(messages=[{"role": "user", "content": "hi"}])
+        assert result.content == "full"
+        assert create.call_count == 2
+
+    def test_client_error_mid_stream_not_retried(self):
+        llm = self._make_llm()
+        create = llm.client.chat.completions.create
+        create.side_effect = [_DyingStream(TestLLMParamFallback._bad_request("nope"))]
+        with pytest.raises(BadRequestError):
+            llm.chat(messages=[{"role": "user", "content": "hi"}])
+        assert create.call_count == 1
+
+    def test_retry_exhausts_and_raises(self):
+        llm = self._make_llm()
+        create = llm.client.chat.completions.create
+        create.side_effect = [
+            _DyingStream(self._connection_error()),
+            _DyingStream(self._connection_error()),
+            _DyingStream(self._connection_error()),
+        ]
+        from openai import APIConnectionError
+
+        with mock.patch("corecoder.llm.time.sleep"):
+            with pytest.raises(APIConnectionError):
+                llm.chat(messages=[{"role": "user", "content": "hi"}])
+        assert create.call_count == 3

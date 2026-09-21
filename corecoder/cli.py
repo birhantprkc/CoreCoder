@@ -22,6 +22,7 @@ from .session import list_sessions, load_session, save_session
 from .tools import ALL_TOOLS
 
 console = Console()
+err_console = Console(stderr=True)
 
 
 def _parse_args():
@@ -146,8 +147,12 @@ def _run_once(agent: Agent, prompt: str):
     def on_tool(name, kwargs):
         console.print(f"\n[dim]> {name}({_brief(kwargs)})[/dim]")
 
+    def on_reasoning(tok):
+        # thinking goes to stderr so piped stdout stays the plain answer
+        err_console.print(f"[dim]{tok}[/dim]", end="")
+
     try:
-        agent.chat(prompt, on_token=on_token, on_tool=on_tool)
+        agent.chat(prompt, on_token=on_token, on_tool=on_tool, on_reasoning=on_reasoning)
     except KeyboardInterrupt:
         console.print("\n[yellow]Interrupted.[/yellow]")
         sys.exit(130)
@@ -303,8 +308,15 @@ def _repl(agent: Agent, config: Config):
         def on_tool(name, kwargs):
             console.print(f"\n[dim]> {name}({_brief(kwargs)})[/dim]")
 
+        def on_reasoning(tok, streamed=streamed):
+            # dim the thinking inline; mark the stream non-empty so the final
+            # newline logic below still fires even if the reply itself is empty
+            streamed.append(tok)
+            console.print(f"[dim]{tok}[/dim]", end="")
+
         try:
-            response = agent.chat(user_input, on_token=on_token, on_tool=on_tool)
+            response = agent.chat(user_input, on_token=on_token, on_tool=on_tool,
+                                  on_reasoning=on_reasoning)
             if streamed:
                 print()  # newline after streamed tokens
             else:

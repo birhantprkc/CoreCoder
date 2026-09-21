@@ -131,8 +131,15 @@ class LLM:
         messages: list[dict],
         tools: list[dict] | None = None,
         on_token=None,
+        on_reasoning=None,
     ) -> LLMResponse:
-        """Send messages, stream back response, handle tool calls."""
+        """Send messages, stream back response, handle tool calls.
+
+        on_reasoning, when given, receives reasoning_content deltas from
+        thinking models (deepseek-reasoner, kimi-k2-thinking, ...). Reasoning
+        is display-only: it never enters the history, since providers reject
+        it when sent back.
+        """
         params: dict = {
             "model": self.model,
             "messages": messages,
@@ -151,17 +158,38 @@ class LLM:
         # exhausted retries. LiteLLM never lands here: drop_params strips
         # unsupported keys on that path.
         params["stream_options"] = {"include_usage": True}
-        while True:
+        last_err = None
+        for attempt in range(3):
+            while True:
+                try:
+                    stream = self._call_with_retry(params)
+                    break
+                except BadRequestError as e:
+                    if _adapt_rejected_param(params, e):
+                        continue
+                    if "stream_options" not in params:
+                        raise
+                    params.pop("stream_options")
             try:
-                stream = self._call_with_retry(params)
-                break
-            except BadRequestError as e:
-                if _adapt_rejected_param(params, e):
-                    continue
-                if "stream_options" not in params:
+                return self._drain(stream, on_token, on_reasoning)
+            except (RateLimitError, APITimeoutError, APIConnectionError) as e:
+                last_err = e
+            except APIError as e:
+                # retry 5xx mid-stream drops but not 4xx
+                status_code = getattr(e, "status_code", None)
+                if not status_code or status_code < 500:
                     raise
-                params.pop("stream_options")
+                last_err = e
+            # The stream died partway through. Nothing has been executed yet,
+            # so re-issuing the whole request is safe; whatever partial text
+            # on_token already showed is simply regenerated. Create-time
+            # transients stay inside _call_with_retry and do not land here.
+            if attempt < 2:
+                time.sleep(2**attempt)
+        raise last_err
 
+    def _drain(self, stream, on_token, on_reasoning) -> LLMResponse:
+        """Consume one stream into an LLMResponse."""
         content_parts: list[str] = []
         tc_map: dict[int, dict] = {}  # index -> {id, name, arguments_str}
         prompt_tok = 0
@@ -180,6 +208,15 @@ class LLM:
             if not getattr(chunk, "choices", None):
                 continue
             delta = chunk.choices[0].delta
+
+            # thinking models stream their chain-of-thought separately; show
+            # it when someone is listening, but never mix it into the reply.
+            # reasoning_content is the DeepSeek/Kimi dialect, reasoning is
+            # what aggregators like OpenRouter normalize it to
+            reasoning = getattr(delta, "reasoning_content", None) or getattr(
+                delta, "reasoning", None)
+            if reasoning and on_reasoning:
+                on_reasoning(reasoning)
 
             # accumulate text
             if getattr(delta, "content", None):
