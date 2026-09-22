@@ -77,6 +77,7 @@ _PRICING = {
     "qwen3-plus": (0.26, 0.78),
     "qwen-max": (0.78, 3.9),
     # Moonshot Kimi
+    "kimi-k3": (3, 15),
     "kimi-k2.5": (0.6, 3),
 }
 

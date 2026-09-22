@@ -16,6 +16,8 @@ import logging
 import subprocess
 from pathlib import Path
 
+from .shell import run_shell
+
 log = logging.getLogger(__name__)
 
 HOOKS_FILE = Path.home() / ".corecoder" / "hooks.json"
@@ -72,8 +74,8 @@ def _fire(hook: dict, payload: dict):
     if matcher not in ("", "*", payload["tool_name"]):
         return None
     try:
-        proc = subprocess.run(
-            hook["command"], shell=True, check=False, input=json.dumps(payload),
+        proc = run_shell(
+            hook["command"], check=False, input=json.dumps(payload),
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=TIMEOUT,
         )
     except (subprocess.TimeoutExpired, OSError) as e:

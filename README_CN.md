@@ -12,7 +12,7 @@
 [![Python](https://img.shields.io/badge/python-3.10+-blue)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Tests](https://github.com/he-yufeng/CoreCoder/actions/workflows/ci.yml/badge.svg)](https://github.com/he-yufeng/CoreCoder/actions)
-[![engine](https://img.shields.io/badge/engine-1308_LoC-blue)](article/)
+[![engine](https://img.shields.io/badge/engine-1309_LoC-blue)](article/)
 [![源码导读](https://img.shields.io/badge/源码导读-8篇双语-orange)](article/)
 
 </div>
@@ -36,7 +36,7 @@ nanoGPT 那一列是拿来对照的：它最小、可读，但教的是训一个
 
 我一直觉得 coding agent 被讲得太玄了。把 Claude Code、Cursor 这类工具扒到底，核心是一个 while 循环套着一个大模型，外加七八个让它能真正动手的工具。难的从来不是这个循环，而是循环跑进真实世界以后要兜的那些底。CoreCoder 就是把这个核心老老实实写出来的最小版本。
 
-引擎部分（循环、模型接口、上下文、工具、会话）去掉空行和注释是 1308 行。连最外层的 CLI、配置、打包一起算，整个包 24 个文件、物理 2594 行、净 2089 行，每个文件都短到能一口气读完。自 1161 行快照之后的增长都花在了看得见的功能上：plan mode、hooks、checkpoints，下文各有交代。
+引擎部分（循环、模型接口、上下文、工具、会话）去掉空行和注释是 1309 行。连最外层的 CLI、配置、打包一起算，整个包 25 个文件、物理 2642 行、净 2128 行，每个文件都短到能一口气读完。自 1161 行快照之后的增长都花在了看得见的功能上：plan mode、hooks、checkpoints，下文各有交代。
 
 它真能跑：读写文件、执行 shell、派子 agent、分三层压上下文，还能随时把这趟烧掉的 token 和美元数报给你。任何要动你磁盘、要跑命令的调用，都会先停下来等你点头，171 个测试是绿的。但能跑不是为了劝你拿去日用，而是为了让这份「注释」不撒谎：一个解释 agent 怎么运作的范例，自己得真能运作。
 
@@ -72,7 +72,7 @@ pip install -e .
 | OmniRoute | `OPENAI_API_KEY=your-key OPENAI_BASE_URL=http://localhost:20128/v1 CORECODER_MODEL=auto` |
 | 本地 Ollama | `OPENAI_API_KEY=ollama OPENAI_BASE_URL=http://localhost:11434/v1 CORECODER_MODEL=qwen2.5-coder` |
 
-Kimi、Qwen 这些同样是改这两个变量；连 OpenAI 兼容接口都不给的 provider，装上可选的 LiteLLM 后端（`pip install "corecoder[litellm]"`）能路由一百多家。第三篇文章把这块讲得更细。思考模型也是一等公民：deepseek-reasoner、kimi-k2-thinking 这类模型的思考过程会实时流出来，CoreCoder 把它用暗色显示出来，但不进对话历史，provider 永远不会在回包里看到它。key 可以直接 `export`，也可以在项目根目录扔个 `.env`，启动时自动加载。然后：
+Kimi、Qwen 这些同样是改这两个变量；连 OpenAI 兼容接口都不给的 provider，装上可选的 LiteLLM 后端（`pip install "corecoder[litellm]"`）能路由一百多家。第三篇文章把这块讲得更细。思考模型也是一等公民：deepseek-reasoner、kimi-k3 这类模型的思考过程会实时流出来，CoreCoder 把它用暗色显示出来，但不进对话历史，provider 永远不会在回包里看到它。key 可以直接 `export`，也可以在项目根目录扔个 `.env`，启动时自动加载。然后：
 
 端到端真机冒烟过三家（读文件、改代码、跑一次确认、自己报告）：DeepSeek、Qwen3、Kimi K2，走同一个 OpenRouter 兼容端点，各自完整跑完全循环。写脚本用 one-shot 的留意：`-p` 默认拒绝一切改动类工具，要加 `--yes`，这是设计如此。
 
@@ -88,11 +88,12 @@ corecoder -p "给 parse_config() 加错误处理"   # 一次性模式，干完�
 ```
 corecoder/
 ├── agent.py        agent 主循环 + 并行工具执行       240 行   ← 从这里开始读
-├── llm.py          流式客户端 + 重试 + 成本统计       331 行
+├── llm.py          流式客户端 + 重试 + 成本统计       332 行
 ├── context.py      三层上下文压缩                     220 行
 ├── session.py      会话存盘 / 续聊 + 路径穿越防护      97 行
 ├── permissions.py  改动类工具的用户授权                48 行
-├── hooks.py        工具调用前后的用户 shell 钩子        85 行
+├── hooks.py        工具调用前后的用户 shell 钩子        87 行
+├── shell.py        POSIX shell 路由（Windows 走 Git Bash） 45 行
 ├── mcp.py          MCP stdio 客户端，接外部工具       208 行
 ├── prompt.py       系统提示词                          41 行
 ├── cli.py          REPL + 斜杠命令 + 一次性模式        358 行
@@ -100,15 +101,15 @@ corecoder/
 ├── checkpoints.py  /undo 快照与回滚                      44 行
 ├── demo.py         离线端到端演示                       100 行
 └── tools/
-    ├── bash.py       shell + 危险命令闸 + cd 追踪      189 行
-    ├── edit.py       唯一匹配搜索替换 + diff            96 行
+    ├── bash.py       shell + 危险命令闸 + cd 追踪      203 行
+    ├── edit.py       唯一匹配搜索替换 + diff            99 行
     ├── grep.py       内容搜索                           93 行
     ├── glob_tool.py  文件名匹配                         52 行
     ├── read.py       文件读取                           56 行
-    ├── write.py      文件写入                           43 行
+    ├── write.py      文件写入                           46 行
     ├── todo.py       agent 自维护的任务清单             79 行
-    ├── agent.py      子 agent 派生                      64 行
-    └── base.py       工具基类                           27 行
+    ├── agent.py      子 agent 派生                      72 行
+    └── base.py       工具基类                           32 行
 examples/
 └── plan_hooks_demo.py  离线 plan mode + hooks 演示（免 API key）
 ```

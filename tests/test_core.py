@@ -1,6 +1,7 @@
 """Tests for core modules: config, context, session, imports."""
 
 import re
+import tempfile
 from pathlib import Path
 from typing import ClassVar
 from unittest import mock
@@ -201,6 +202,17 @@ def test_cost_estimation_known_model():
     assert cost is not None
     assert cost == 2.5 + 7.5  # $2.5/M in + $15/M out * 0.5M
 
+def test_cost_estimation_kimi_k3():
+    from corecoder.llm import LLM
+    llm = LLM.__new__(LLM)
+    llm.model = "kimi-k3"
+    llm.total_prompt_tokens = 1_000_000
+    llm.total_completion_tokens = 500_000
+    cost = llm.estimated_cost
+    assert cost is not None
+    assert cost == 3.0 + 7.5  # $3/M in + $15/M out * 0.5M
+
+
 def test_cost_estimation_unknown_model():
     from corecoder.llm import LLM
     llm = LLM.__new__(LLM)
@@ -246,6 +258,9 @@ def test_parallel_bash_calls_inherit_and_merge_session_cwd(tmp_path):
         s = s.strip().replace("\\", "/").rstrip("/").lower()
         if len(s) >= 3 and s[0] == "/" and s[2] == "/" and s[1].isalpha():
             s = s[1] + ":/" + s[3:]
+        # git-bash mounts %TEMP% at /tmp, so pytest's tmp_path shows up there
+        if s.startswith("/tmp/"):
+            s = norm_dir(tempfile.gettempdir()) + s[4:]
         return s
 
     bash = get_tool("bash")
@@ -714,7 +729,6 @@ class TestMidStreamRetry:
         ]
         from openai import APIConnectionError
 
-        with mock.patch("corecoder.llm.time.sleep"):
-            with pytest.raises(APIConnectionError):
-                llm.chat(messages=[{"role": "user", "content": "hi"}])
+        with mock.patch("corecoder.llm.time.sleep"), pytest.raises(APIConnectionError):
+            llm.chat(messages=[{"role": "user", "content": "hi"}])
         assert create.call_count == 3
