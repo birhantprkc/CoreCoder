@@ -6,9 +6,25 @@ spawn in CoreCoder goes through here so Windows gets Git Bash instead.
 """
 
 import os
+import re
 import shutil
 import subprocess
 from functools import lru_cache
+
+# Drive-letter span: `C:\Users\...` up to a shell metacharacter. Escapes like
+# `\n` never follow a drive letter, so they pass through untouched.
+_DRIVE_PATH_RE = re.compile(r"([A-Za-z]):((?:\\[^\s;&|<>()'\"]+)+)")
+
+
+def _posixify_drive_paths(command: str) -> str:
+    """Rewrite drive-letter paths to git-bash's ``C:/...`` form.
+
+    bash's lexer eats backslashes, so an unquoted ``C:\\Users\\runner`` hook
+    path or ``cd`` target comes out as ``C:Usersrunner`` and the command
+    fails silently. git-bash accepts the forward-slash form natively, and no
+    shell escape sequence looks like a drive letter.
+    """
+    return _DRIVE_PATH_RE.sub(lambda m: m.group(1) + ":" + m.group(2).replace("\\", "/"), command)
 
 
 @lru_cache(maxsize=1)
@@ -41,5 +57,5 @@ def run_shell(command: str, check: bool = False, **kwargs) -> subprocess.Complet
     """
     bash = _git_bash()
     if bash is not None:
-        return subprocess.run([bash, "-c", command], shell=False, check=check, **kwargs)
+        return subprocess.run([bash, "-c", _posixify_drive_paths(command)], shell=False, check=check, **kwargs)
     return subprocess.run(command, shell=True, check=check, **kwargs)

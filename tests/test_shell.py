@@ -59,3 +59,13 @@ def test_run_shell_falls_back_to_platform_shell():
     ):
         run_shell("pwd", check=False)
     run.assert_called_once_with("pwd", shell=True, check=False)
+
+
+def test_posixify_rewrites_drive_paths():
+    from corecoder.shell import _posixify_drive_paths
+
+    assert _posixify_drive_paths(r'cd C:\Users\runner\proj && pwd') == "cd C:/Users/runner/proj && pwd"
+    assert _posixify_drive_paths(r'"C:\Users\runner\hook.sh"') == '"C:/Users/runner/hook.sh"'
+    # shell escapes are not drive letters and stay untouched
+    assert _posixify_drive_paths(r'echo "a\nb"') == r'echo "a\nb"'
+    assert _posixify_drive_paths("ls /tmp && echo done") == "ls /tmp && echo done"
